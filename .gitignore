@@ -1,0 +1,9 @@
+*.pt
+__pycache__
+*.pickle
+*.out
+*.job
+*.sh
+*.png
+.DS_Store
+.vscode
