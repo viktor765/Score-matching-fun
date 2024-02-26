@@ -48,9 +48,9 @@ train_loader = torch.utils.data.DataLoader(train_data, batch_size=100, shuffle=T
 
 # %%
 
-n_epochs = 50
+n_epochs = 100
 learning_rate = 0.0001
-layers = [3, 2000, 2000, 2]
+layers = [3, 4000, 4000, 2]
 
 # %%
 
@@ -130,7 +130,8 @@ for epoch in range(n_epochs):
         x_in = torch.cat((t, x_t), 1)
         s = model(x_in)
 
-        loss = torch.mean((s - score)**2)
+        loss = torch.mean(sigma_sq_t * (s - score)**2)
+        #loss = torch.mean((s - score)**2)
         loss.backward()
 
         #clip gradient
@@ -269,6 +270,81 @@ ax[1].set_ylim([-5, 5])
 
 plt.savefig('checkerboard_reverse_generated.pdf')
 
+plt.show()
+
+# %%
+
+# Compute likelihood
+
+# Cartesian product of x1 and x2
+num_points = 201
+x1 = np.linspace(-4, 4, num_points)
+x2 = np.linspace(-4, 4, num_points)
+x1, x2 = np.meshgrid(x1, x2)
+
+x1 = x1.flatten()
+x2 = x2.flatten()
+
+x = torch.tensor(np.array([x1, x2]).T, dtype=torch.float32, device=device2)
+
+dt = 0.02
+
+x_t = x
+p_t = torch.zeros(x.shape[0], device=device2)
+for t in np.arange(0, 1, dt)[::+1]:
+    x_in = torch.cat((t * torch.ones(x_t.shape[0], 1, device=device2), x_t), 1).detach().requires_grad_(True)
+    #remove gradients
+    x_in.grad = None
+    model_sim.requires_grad_(False)
+
+    # take divergence of the score
+    s = model_sim(x_in)
+
+    g = sigma_der_sqrt(torch.tensor(t))
+
+    drift = -1/2 * g**2 * s
+
+    dx = drift * dt
+
+    # calculate divergence
+    div = torch.zeros(x_t.shape[0], device=device2)
+
+    for i in range(2):
+        v = torch.zeros_like(s)
+        v[:, i] = 1
+        x_in.grad = None
+        s.backward(v, retain_graph=True)
+        div = div + x_in.grad[:, i+1]
+
+    dp = -1/2 * g**2 * div * dt
+    p_t = p_t + dp
+
+    x_t = x_t + dx
+
+log_likelihood = -1/2 * x_t.pow(2).sum(1) / sigma_sq_final - 2/2 * np.log(2 * np.pi * sigma_sq_final)
+log_likelihood = log_likelihood + p_t
+log_likelihood = log_likelihood.cpu().detach().numpy().reshape(num_points, num_points)
+
+x_samples_ode_forward = x_t
+# %%
+plt.scatter(x_samples_ode_forward[:, 0].cpu().detach(), x_samples_ode_forward[:, 1].cpu().detach(), s=1)
+plt.xlim([-26, 26])
+plt.ylim([-26, 26])
+plt.savefig('checkerboard_likelihood_forward_generated.pdf')
+plt.show()
+# %%
+
+# plot likelihood
+
+l_ = np.flip(log_likelihood, 0)
+#plt.imshow(l_, extent=(-4, 4, -4, 4))
+plt.imshow(np.exp(l_).clip(0, 10), extent=(-4, 4, -4, 4))
+plt.colorbar()
+plt.savefig('checkerboard_reverse_likelihood.pdf')
+plt.show()
+# %%
+
+plt.hist(x_samples_ode_forward[:, 1].cpu().detach().numpy(), bins=100)
 plt.show()
 
 # %%
